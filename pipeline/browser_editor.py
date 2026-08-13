@@ -133,7 +133,7 @@ EDITOR_UI = """
 
   const markText = (element) => {
     if (element.closest("#prescription-editor-toolbar")) return;
-    if (element.children.length === 0 && element.textContent.trim()) {
+    if ((element.matches(".text-element") || element.children.length === 0) && element.textContent.trim()) {
       element.dataset.editorText = "true";
       element.dataset.editorNode = "true";
       element.contentEditable = "true";

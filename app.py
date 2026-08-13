@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import base64
 from dataclasses import replace
 import hashlib
@@ -20,13 +19,12 @@ from pipeline.asset_reconstruction import (
     sanitize_graphics,
 )
 from pipeline.browser_editor import build_editor_html, publish_editor_html
-from pipeline.document_analyzer import analyze_graphics
+from pipeline.document_analyzer import analyze_document
 from pipeline.document_manifest import DocumentManifest, NormalizedBox
-from pipeline.gemini_vision import GeminiRateLimitError, generate_clean_html
-from pipeline.html_render import prepare_print_html, render_html
+from pipeline.html_render import render_html
 from pipeline.page_geometry import PageGeometry
 from pipeline.preprocess import pil_to_bytes, preprocess_document
-from pipeline.template_renderer import build_fidelity_html, inject_source_graphics
+from pipeline.template_renderer import build_fidelity_html, render_manifest_html
 from pipeline.visual_validation import compare_images, difference_heatmap
 
 
@@ -80,6 +78,7 @@ PIPELINE_KEYS = [
     "editable_html",
     "editable_img",
     "editable_png",
+    "editable_pdf",
     "editor_html",
     "editor_url",
     "heatmap",
@@ -92,7 +91,7 @@ PIPELINE_KEYS = [
     "artwork_assets",
     "artwork_manifest",
     "artwork_base_manifest",
-    "editable_base_html",
+    "editable_manifest",
     "artwork_warnings",
     "_file_key",
 ]
@@ -126,6 +125,9 @@ def _apply_artwork_adjustments() -> None:
     base_manifest: DocumentManifest = state["artwork_base_manifest"]
     elements = []
     for element in base_manifest.elements:
+        if element.kind != "image":
+            elements.append(element)
+            continue
         key = f"artwork-{element.id}"
         offset_x = state.get(f"{key}-x", 0.0) / 100
         offset_y = state.get(f"{key}-y", 0.0) / 100
@@ -143,18 +145,18 @@ def _apply_artwork_adjustments() -> None:
         elements.append(replace(element, box=adjusted, opacity=opacity))
     graphics = replace(base_manifest, elements=tuple(elements))
     page = PageGeometry.from_pixels(*state.canonical_source.size)
-    html = inject_source_graphics(
-        state.editable_base_html, graphics, state.artwork_assets, page
-    )
-    image, _ = render_html(html, state.get("render_dpi", 300), page)
+    html = render_manifest_html(graphics, state.artwork_assets, page)
+    image, pdf_bytes = render_html(html, state.get("render_dpi", 300), page)
     state.editable_html = html
     state.editable_img = image
     state.editable_png = pil_to_bytes(image)
+    state.editable_pdf = pdf_bytes
     state.editable_score = compare_images(state.restored_source, image)
     state.editor_html = build_editor_html(html)
     state.editor_url = publish_editor_html(state.editor_html)
     state.heatmap = difference_heatmap(state.restored_source, image)
     state.artwork_manifest = graphics
+    state.editable_manifest = graphics
 
 
 with st.sidebar:
@@ -191,8 +193,8 @@ with st.sidebar:
         """
         **Pipeline**
         <div class="pipeline-step">1. Detect, rectify, and restore the page</div>
-        <div class="pipeline-step">2. Generate clean editable text and layout</div>
-        <div class="pipeline-step">3. Restore original logo and watermark layers</div>
+        <div class="pipeline-step">2. Measure one shared editable page manifest</div>
+        <div class="pipeline-step">3. Rebuild text, rules, and original artwork deterministically</div>
         <div class="pipeline-step">4. Export faithful and editable versions</div>
         """,
         unsafe_allow_html=True,
@@ -209,7 +211,7 @@ if uploaded:
     image_bytes = uploaded.getvalue()
     digest = hashlib.sha256(image_bytes).hexdigest()
     crop_key = "auto" if manual_crop is None else ":".join(f"{value:.2f}" for value in manual_crop)
-    file_key = f"{digest}_{dpi}_{crop_key}_hybrid-text-v6-multitemplate"
+    file_key = f"{digest}_{dpi}_{crop_key}_source-first-v1"
     if st.session_state.get("_file_key") != file_key:
         _clear_pipeline()
         st.session_state["_file_key"] = file_key
@@ -240,39 +242,27 @@ if uploaded:
         editable_html = fidelity_html
         editable_img = result_img
         editable_score = fidelity_score
+        editable_pdf = pdf_bytes
 
-        with st.spinner("Generating editable text and restoring source graphics in parallel..."):
+        with st.spinner("Measuring editable text, layout, and source artwork..."):
             try:
                 analysis_bytes = pil_to_bytes(processed.analysis)
-                # These Gemini requests inspect the same page but have no dependency
-                # on each other. Running them together shortens the wait without
-                # changing the model, prompt, source pixels, or output settings.
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    text_future = executor.submit(
-                        generate_clean_html, analysis_bytes, source_page
-                    )
-                    graphics_future = executor.submit(
-                        analyze_graphics, analysis_bytes, source_page
-                    )
-                    text_html = text_future.result()
-                    graphics, artwork_warnings = sanitize_graphics(graphics_future.result())
-                    graphics = complete_graphic_bounds(processed.analysis, graphics)
-                text_html = prepare_print_html(text_html, source_page)
-
-                assets = reconstruct_assets(processed.restored, graphics)
-                candidate_html = inject_source_graphics(
-                    text_html, graphics, assets, source_page
-                )
-                candidate_img, _candidate_pdf = render_html(candidate_html, dpi, source_page)
+                # One measured manifest is the shared coordinate system for every
+                # editable text line, rule, color region, logo, and watermark.
+                # This deliberately replaces competing HTML and artwork AI calls.
+                manifest = analyze_document(analysis_bytes, source_page)
+                graphics, artwork_warnings = sanitize_graphics(manifest)
+                graphics = complete_graphic_bounds(processed.canonical, graphics)
+                # Artwork is cropped from the unenhanced rectified source so its
+                # original identity, color, and fine detail are not regenerated.
+                assets = reconstruct_assets(processed.canonical, graphics)
+                candidate_html = render_manifest_html(graphics, assets, source_page)
+                candidate_img, candidate_pdf = render_html(candidate_html, dpi, source_page)
                 candidate_score = compare_images(processed.restored, candidate_img)
                 editable_html = candidate_html
                 editable_img = candidate_img
                 editable_score = candidate_score
-            except GeminiRateLimitError as error:
-                analysis_error = (
-                    "Editable text reconstruction is waiting on the Gemini API quota. "
-                    f"{error} The faithful restored page remains available meanwhile."
-                )
+                editable_pdf = candidate_pdf
             except Exception as error:
                 analysis_error = (
                     "Editable text reconstruction was unavailable, so the editor uses "
@@ -303,6 +293,7 @@ if uploaded:
             editable_html=editable_html,
             editable_img=editable_img,
             editable_png=pil_to_bytes(editable_img),
+            editable_pdf=editable_pdf,
             editor_html=editor_html,
             editor_url=editor_url,
             heatmap=heatmap,
@@ -316,7 +307,7 @@ if uploaded:
             artwork_warnings=artwork_warnings if not analysis_error else (),
             artwork_manifest=graphics if not analysis_error else DocumentManifest(),
             artwork_base_manifest=graphics if not analysis_error else DocumentManifest(),
-            editable_base_html=text_html if not analysis_error else fidelity_html,
+            editable_manifest=graphics if not analysis_error else DocumentManifest(),
             render_dpi=dpi,
         )
 
@@ -327,7 +318,7 @@ if uploaded:
         st.markdown("#### Original (rectified)")
         st.image(state.canonical_source, use_container_width=True)
     with output_column:
-        st.markdown("#### Maximum-fidelity clean output")
+        st.markdown("#### Restored source output")
         st.image(state.result_img, use_container_width=True)
 
     metric1, metric2, metric3 = st.columns(3)
@@ -368,6 +359,8 @@ if uploaded:
                     )
             st.markdown("#### Placement adjustments")
             for element in state.artwork_base_manifest.elements:
+                if element.kind != "image":
+                    continue
                 key = f"artwork-{element.id}"
                 controls = st.columns(4)
                 with controls[0]:
@@ -431,19 +424,26 @@ if uploaded:
         )
     with download5:
         st.download_button(
+            "Download editable PDF",
+            state.editable_pdf,
+            "clean_pad_editable.pdf",
+            "application/pdf",
+            use_container_width=True,
+        )
+    with download6:
+        st.download_button(
             "Download editable HTML",
             state.editor_html,
             "clean_pad_editable.html",
             "text/html",
             use_container_width=True,
         )
-    with download6:
-        st.link_button(
-            "Open browser editor",
-            state.editor_url,
-            type="primary",
-            use_container_width=True,
-        )
+    st.link_button(
+        "Open browser editor",
+        state.editor_url,
+        type="primary",
+        use_container_width=True,
+    )
 
     if st.button("Process another image"):
         _clear_pipeline()

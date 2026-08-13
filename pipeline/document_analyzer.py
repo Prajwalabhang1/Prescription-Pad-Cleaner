@@ -13,6 +13,11 @@ from pipeline.openrouter import generate_openrouter_content
 from pipeline.page_geometry import PageGeometry
 
 
+# A measured JSON manifest is far smaller than model-authored HTML/CSS. This
+# accommodates dense multilingual pads while bounding the only AI request.
+MANIFEST_OUTPUT_TOKENS = 16_384
+
+
 ANALYSIS_PROMPT = """You are measuring a printed medical prescription template.
 Return one JSON object only. Do not return HTML, markdown, or explanations.
 
@@ -23,7 +28,7 @@ The JSON format is:
     {
       "id": "stable-id",
       "kind": "text|image|line|shape",
-      "role": "title|doctor|field|service|logo|watermark|footer|other",
+      "role": "title|doctor|field|service|footer|logo|medical_icon|watermark_photo|watermark_seal|photo|seal|signature|other",
       "bbox": [x, y, width, height],
       "text": "exact visible text",
       "font_family": "closest font name",
@@ -44,10 +49,14 @@ The JSON format is:
 
 All bbox values and font_size are fractions of the complete page, from 0 to 1.
 Measure the actual image; do not assume a standard prescription template.
-Transcribe every Hindi and English line exactly. Keep separate lines as separate
-text elements. Represent circular seals, photographs, logos, signatures, and
-watermarks as image elements so source pixels can be restored. Do not describe
-or redraw those graphics. Represent every divider and border as a line or shape.
+This is a measurement task, not a design task: never invent, simplify, move, or
+omit visible layout content. Transcribe every Hindi and English line exactly.
+Keep separate lines, bullets, labels, and doctor details as separate text
+elements so each one remains editable. Represent circular seals, photographs,
+logos, signatures, medical icons, and watermarks as image elements so original
+source pixels can be restored. Use `watermark_photo` for a faint portrait or
+baby image and `watermark_seal` for a faint circular stamp. Do not describe or
+redraw those graphics. Represent every divider and border as a line or shape.
 Record the true opacity of watermarks. Preserve reading and visual z-order.
 """
 
@@ -98,7 +107,7 @@ def analyze_document(image_bytes: bytes, page: PageGeometry) -> DocumentManifest
             "image/png",
             "You return only valid JSON for document measurement.",
             ANALYSIS_PROMPT + f"\nThe page is {page.css_size} ({page.orientation}).",
-            24_576,
+            MANIFEST_OUTPUT_TOKENS,
             {"type": "json_object"},
         )
         return DocumentManifest.from_json(raw)
@@ -115,7 +124,7 @@ def analyze_document(image_bytes: bytes, page: PageGeometry) -> DocumentManifest
                 ],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    max_output_tokens=24_576,
+                    max_output_tokens=MANIFEST_OUTPUT_TOKENS,
                     thinking_config=types.ThinkingConfig(thinking_level="high"),
                     http_options=types.HttpOptions(timeout=180_000),
                 ),

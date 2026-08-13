@@ -7,9 +7,10 @@ prescription template:
   perspective-corrected, illumination-normalized, denoised, sharpened, and
   rendered as a 300-DPI PNG/PDF. Logos, photographs, watermarks, colors, and
   typography remain source-derived.
-- **Structured editable output**: Gemini measures text, lines, regions, and
-  graphic bounding boxes as validated JSON. A deterministic renderer rebuilds
-  the page while restored source crops are used for logos and watermarks.
+- **Structured editable output**: one vision request measures text, lines,
+  colors, regions, and graphic bounds as validated JSON. A deterministic
+  renderer rebuilds the page while original, unenhanced source crops are used
+  for logos, seals, photos, and watermarks.
 
 ## Pipeline
 
@@ -17,16 +18,18 @@ prescription template:
 Input JPEG/PNG
   -> paper detection and perspective rectification
   -> full-resolution print restoration
-  -> structured Gemini document manifest
-  -> source graphic extraction and restoration
-  -> deterministic HTML/PDF renderer
+  -> one structured document manifest (text + rules + artwork coordinates)
+  -> deterministic editable HTML/CSS renderer
+  -> original source graphic extraction from the rectified page
   -> visual similarity scoring and optional correction pass
   -> faithful PNG/PDF plus editable PNG/HTML
 ```
 
 The print result does not depend on successful AI reconstruction. If the API is
-unavailable or the editable layout is low-confidence, the source-faithful PNG
-and PDF are still produced.
+unavailable or the editable layout cannot be measured, the source-faithful PNG
+and PDF are still produced. For phone photos where page detection includes a
+desk or surrounding objects, use the Manual page crop controls before running
+the reconstruction.
 
 ## Setup
 

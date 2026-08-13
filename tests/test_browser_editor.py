@@ -23,6 +23,7 @@ class BrowserEditorTests(unittest.TestCase):
         self.assertIn(EDITOR_MARKER, editor_html)
         self.assertIn("Download edited HTML", editor_html)
         self.assertIn("Click text to edit", editor_html)
+        self.assertIn('element.matches(".text-element")', editor_html)
         self.assertIn("<h1>Clinic</h1>", editor_html)
 
     def test_publish_uses_hashed_non_sensitive_filename(self):

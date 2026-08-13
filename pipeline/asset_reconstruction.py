@@ -196,6 +196,9 @@ def sanitize_graphics(manifest: DocumentManifest) -> tuple[DocumentManifest, tup
     accepted = []
     warnings: list[str] = []
     for element in manifest.elements:
+        if element.kind != "image":
+            accepted.append(element)
+            continue
         family = _role_family(element.role)
         box = element.box
         area = box.width * box.height
@@ -227,6 +230,9 @@ def complete_graphic_bounds(source: Image.Image, manifest: DocumentManifest) -> 
     rgb = _small_rgb(source)
     corrected = []
     for element in manifest.elements:
+        if element.kind != "image":
+            corrected.append(element)
+            continue
         role = _role_family(element.role)
         box = element.box
         if role == "seal" or (role == "logo" and _is_near_square(box)):

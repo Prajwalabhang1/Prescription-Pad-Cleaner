@@ -5,7 +5,11 @@ import unittest
 
 from PIL import Image, ImageDraw
 
-from pipeline.asset_reconstruction import reconstruct_assets
+from pipeline.asset_reconstruction import (
+    complete_graphic_bounds,
+    reconstruct_assets,
+    sanitize_graphics,
+)
 from pipeline.document_manifest import DocumentManifest
 from pipeline.page_geometry import PageGeometry
 from pipeline.preprocess import preprocess_document
@@ -65,6 +69,46 @@ class AccuracyPipelineTests(unittest.TestCase):
         self.assertIn('id="logo"', html)
         self.assertIn('id="title"', html)
         self.assertNotIn("<svg", html)
+
+    def test_source_first_manifest_keeps_text_geometry_while_correcting_images(self):
+        manifest = DocumentManifest.from_dict(
+            {
+                "background": "#ffffff",
+                "elements": [
+                    {
+                        "id": "clinic-title",
+                        "kind": "text",
+                        "role": "title",
+                        "bbox": [0.22, 0.05, 0.58, 0.06],
+                        "text": "Exact Clinic Title",
+                        "font_size": 0.028,
+                        "font_weight": 700,
+                    },
+                    {
+                        "id": "logo",
+                        "kind": "image",
+                        "role": "logo",
+                        "bbox": [0.04, 0.04, 0.12, 0.12],
+                    },
+                ],
+            }
+        )
+        source = Image.new("RGB", (600, 800), "white")
+        ImageDraw.Draw(source).ellipse((24, 24, 108, 108), fill="#245d9f")
+
+        checked, warnings = sanitize_graphics(manifest)
+        corrected = complete_graphic_bounds(source, checked)
+        title = next(element for element in corrected.elements if element.id == "clinic-title")
+        assets = reconstruct_assets(source, corrected)
+        html = render_manifest_html(
+            corrected, assets, PageGeometry.from_pixels(*source.size)
+        )
+
+        self.assertEqual(warnings, ())
+        self.assertEqual(title.box, manifest.elements[0].box)
+        self.assertIn("Exact Clinic Title", html)
+        self.assertIn('data-role="logo"', html)
+        self.assertIn("object-fit:contain", html)
 
     def test_visual_score_distinguishes_identical_and_wrong_pages(self):
         source = Image.new("RGB", (500, 700), "white")

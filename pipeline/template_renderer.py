@@ -139,7 +139,7 @@ def _render_element(
             return ""
         return (
             f'<img id="{element_id}" class="document-element source-asset" '
-            f'data-role="{role}" src="{source}" alt="" style="{common}object-fit:fill;">'
+            f'data-role="{role}" src="{source}" alt="" style="{common}object-fit:contain;">'
         )
 
     if element.kind == "line":
@@ -200,7 +200,7 @@ html, body {{ width:{page.width_mm:.3f}mm; height:{page.height_mm:.3f}mm; margin
 .page {{ position:relative; width:100%; height:100%; overflow:hidden; background:{manifest.background}; }}
 .document-element {{ position:absolute; margin:0; padding:0; transform-origin:center center; }}
 .text-element {{ overflow:hidden; white-space:pre-wrap; letter-spacing:0; }}
-.source-asset {{ display:block; }}
+.source-asset {{ display:block; object-fit:contain; }}
 </style></head><body><div class="page">
 {elements}
 </div></body></html>"""
