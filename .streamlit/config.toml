@@ -1,0 +1,3 @@
+[server]
+# The built-in editor pages are served from ./static/editor.
+enableStaticServing = true

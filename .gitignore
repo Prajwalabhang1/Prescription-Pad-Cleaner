@@ -1,0 +1,26 @@
+# Credentials and local Streamlit configuration
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local rendering outputs and scratch files
+output/
+tmp/
+static/editor/*.html
+latest_fidelity.html
+latest_output.html
+test_output.png
+test_pipeline.html
+test_pipeline_output.png
+test_svg_no_xmlns.png
+flex_bug_test.png
+dummy.png
+
+# Operating-system files
+.DS_Store

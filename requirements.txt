@@ -1,0 +1,10 @@
+streamlit>=1.35
+opencv-python-headless
+numpy
+Pillow
+requests
+google-genai
+weasyprint
+PyMuPDF
+playwright
+pytest
