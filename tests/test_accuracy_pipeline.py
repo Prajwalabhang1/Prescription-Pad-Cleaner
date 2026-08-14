@@ -110,6 +110,57 @@ class AccuracyPipelineTests(unittest.TestCase):
         self.assertIn('data-role="logo"', html)
         self.assertIn("object-fit:contain", html)
 
+    def test_manifest_renderer_fits_overlong_editable_text_instead_of_clipping(self):
+        manifest = DocumentManifest.from_dict(
+            {
+                "elements": [
+                    {
+                        "id": "long-line",
+                        "kind": "text",
+                        "bbox": [0.1, 0.2, 0.1, 0.02],
+                        "text": "Exchange Transfusion and Treatment Details",
+                        "font_size": 0.025,
+                    }
+                ]
+            }
+        )
+
+        html = render_manifest_html(manifest, {}, PageGeometry(100, 150))
+
+        self.assertIn('data-fit-text="true"', html)
+        self.assertIn('id="manifest-text-fit"', html)
+        self.assertIn("window.__prescriptionTextFitReady = true", html)
+        self.assertIn("white-space:nowrap", html)
+        self.assertNotIn(".text-element { overflow:hidden", html)
+
+    def test_manifest_renderer_uses_stable_fonts_for_hindi_and_english(self):
+        manifest = DocumentManifest.from_dict(
+            {
+                "elements": [
+                    {
+                        "id": "hindi",
+                        "kind": "text",
+                        "bbox": [0.1, 0.1, 0.3, 0.04],
+                        "text": "बाल रोग विशेषज्ञ",
+                        "font_family": "sans-serif",
+                    },
+                    {
+                        "id": "english",
+                        "kind": "text",
+                        "bbox": [0.1, 0.2, 0.3, 0.04],
+                        "text": "Dr. Example",
+                        "font_family": "sans-serif",
+                    },
+                ]
+            }
+        )
+
+        html = render_manifest_html(manifest, {}, PageGeometry(100, 150))
+
+        self.assertIn("font-family:'Nirmala UI'", html)
+        self.assertIn("font-family:Arial, Helvetica, sans-serif", html)
+        self.assertIn("font-synthesis:none", html)
+
     def test_visual_score_distinguishes_identical_and_wrong_pages(self):
         source = Image.new("RGB", (500, 700), "white")
         draw = ImageDraw.Draw(source)

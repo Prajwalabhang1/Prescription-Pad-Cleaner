@@ -16,6 +16,18 @@ from pipeline.page_geometry import PageGeometry
 FONT_STACK = (
     "'Nirmala UI', 'Noto Sans Devanagari', 'Mangal', Arial, Helvetica, sans-serif"
 )
+LATIN_FONT_STACK = "Arial, Helvetica, sans-serif"
+
+
+def _font_stack_for(element: DocumentElement) -> str:
+    """Choose predictable local fonts instead of treating `sans-serif` as a font name."""
+    requested = element.font_family.strip().lower()
+    has_devanagari = any("\u0900" <= character <= "\u097f" for character in element.text)
+    if has_devanagari:
+        return FONT_STACK
+    if requested in {"", "sans", "sans-serif", "arial", "helvetica", "inter", "roboto"}:
+        return LATIN_FONT_STACK
+    return f"'{escape(element.font_family, quote=True)}',{LATIN_FONT_STACK}"
 
 
 def _image_data_uri(image: Image.Image) -> str:
@@ -171,9 +183,9 @@ def _render_element(
         )
 
     text = escape(element.text).replace("\n", "<br>")
-    family = escape(element.font_family, quote=True)
+    family = _font_stack_for(element)
     text_style = (
-        f"font-family:'{family}',{FONT_STACK};"
+        f"font-family:{family};"
         f"font-size:{element.font_size * page.height_mm:.5f}mm;"
         f"font-weight:{element.font_weight};line-height:{element.line_height};"
         f"color:{element.color};background:{element.background};"
@@ -181,7 +193,8 @@ def _render_element(
     )
     return (
         f'<div id="{element_id}" class="document-element text-element" '
-        f'data-role="{role}" style="{common}{text_style}">{text}</div>'
+        f'data-role="{role}" data-fit-text="true" '
+        f'data-align="{element.align}" style="{common}{text_style}">{text}</div>'
     )
 
 
@@ -199,8 +212,44 @@ def render_manifest_html(
 html, body {{ width:{page.width_mm:.3f}mm; height:{page.height_mm:.3f}mm; margin:0; padding:0; background:{manifest.background}; }}
 .page {{ position:relative; width:100%; height:100%; overflow:hidden; background:{manifest.background}; }}
 .document-element {{ position:absolute; margin:0; padding:0; transform-origin:center center; }}
-.text-element {{ overflow:hidden; white-space:pre-wrap; letter-spacing:0; }}
+.text-element {{ overflow:visible; white-space:nowrap; letter-spacing:0; font-synthesis:none; }}
 .source-asset {{ display:block; object-fit:contain; }}
-</style></head><body><div class="page">
+</style>
+<script id="manifest-text-fit">
+(() => {{
+  const fit = () => {{
+    document.querySelectorAll('[data-fit-text="true"]').forEach((element) => {{
+      const computed = window.getComputedStyle(element);
+      const originalTransform = element.style.transform || "none";
+      const align = element.dataset.align || "left";
+      element.style.transformOrigin = `${{align === "right" ? "right" : align === "center" ? "center" : "left"}} top`;
+      let size = parseFloat(computed.fontSize) || 10;
+      const minSize = Math.max(3.5, size * 0.38);
+      let attempts = 0;
+      const overflows = () => element.scrollWidth > element.clientWidth + 0.5
+        || element.scrollHeight > element.clientHeight + 0.5;
+      while (overflows() && size > minSize && attempts < 48) {{
+        size *= 0.94;
+        element.style.fontSize = `${{size}}px`;
+        attempts += 1;
+      }}
+      if (overflows()) {{
+        const scale = Math.min(
+          1,
+          Math.max(0.2, (element.clientWidth - 0.5) / Math.max(1, element.scrollWidth)),
+          Math.max(0.2, (element.clientHeight - 0.5) / Math.max(1, element.scrollHeight))
+        );
+        element.style.transform = `${{originalTransform}} scale(${{scale}})`;
+      }}
+    }});
+    window.__prescriptionTextFitReady = true;
+  }};
+  if (document.fonts && document.fonts.ready) {{
+    document.fonts.ready.then(fit);
+  }} else {{
+    fit();
+  }}
+}})();
+</script></head><body><div class="page">
 {elements}
 </div></body></html>"""

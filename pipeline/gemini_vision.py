@@ -35,6 +35,9 @@ CRITICAL REQUIREMENTS:
  • Reproduce the exact layout you observe. Do not assume a standard
    prescription layout, logo position, caduceus, banner, or field list.
  • Preserve ALL text in BOTH Hindi (Devanagari) and English exactly as shown.
+ • Never infer, complete, translate, normalize, or invent text from medical
+   context. Copy only characters visibly present in the source; do not add
+   clinic details, services, contact numbers, or labels that are not visible.
  • Match colours precisely — use the exact hex/rgb values you observe.
  • Use Google Fonts:
    – 'Noto Sans Devanagari' (weights 400, 700) for Hindi text.

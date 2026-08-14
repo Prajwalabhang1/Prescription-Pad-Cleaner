@@ -133,6 +133,10 @@ def _render_with_playwright(
             )
             page_obj.goto(html_path.as_uri(), wait_until="load")
             page_obj.evaluate("document.fonts.ready")
+            if 'id="manifest-text-fit"' in html:
+                page_obj.wait_for_function(
+                    "window.__prescriptionTextFitReady === true", timeout=10_000
+                )
             page_obj.wait_for_function(
                 "Array.from(document.images).every((image) => image.complete && image.naturalWidth > 0)"
             )

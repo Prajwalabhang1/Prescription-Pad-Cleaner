@@ -58,6 +58,10 @@ source pixels can be restored. Use `watermark_photo` for a faint portrait or
 baby image and `watermark_seal` for a faint circular stamp. Do not describe or
 redraw those graphics. Represent every divider and border as a line or shape.
 Record the true opacity of watermarks. Preserve reading and visual z-order.
+For every text element, make `bbox` cover the entire printed line at its stated
+font_size. Never use a guessed or shortened transcription: if a line cannot be
+read from the source, retain only the clearly visible characters and use the
+tight source bounds rather than inventing words.
 """
 
 
