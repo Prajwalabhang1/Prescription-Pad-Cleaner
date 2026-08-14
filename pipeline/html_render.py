@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 
@@ -174,19 +173,17 @@ def render_html(
     """Render *html* to (PIL.Image, pdf_bytes)."""
     printable_html = prepare_print_html(html, page)
 
-    # WeasyPrint's Pango/GObject stack is not bundled on Windows. Chromium is
-    # deterministic here and avoids emitting a native-library error before the
-    # fallback succeeds.
-    if os.name == "nt":
-        return _render_with_playwright(printable_html, resolution, page)
-
+    # Chromium is the primary renderer on every platform. It gives the same
+    # OpenType shaping and downloaded-font behaviour locally and on the VPS,
+    # which is essential for Hindi/Devanagari prescription text. WeasyPrint
+    # remains a fallback when Chromium is unavailable.
     try:
-        return _render_with_weasyprint(printable_html, resolution)
-    except Exception as weasy_error:
+        return _render_with_playwright(printable_html, resolution, page)
+    except Exception as playwright_error:
         try:
-            return _render_with_playwright(printable_html, resolution, page)
-        except Exception as playwright_error:
+            return _render_with_weasyprint(printable_html, resolution)
+        except Exception as weasy_error:
             raise HtmlRenderError(
                 "Both available HTML renderers failed. "
                 f"Chromium: {playwright_error}. WeasyPrint: {weasy_error}"
-            ) from playwright_error
+            ) from weasy_error

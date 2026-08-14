@@ -1,8 +1,9 @@
 """Regression tests for the single-page PDF print contract."""
 
 import unittest
+from unittest.mock import patch
 
-from pipeline.html_render import prepare_print_html
+from pipeline.html_render import prepare_print_html, render_html
 from pipeline.page_geometry import PageGeometry
 
 
@@ -25,6 +26,20 @@ class HtmlRenderTests(unittest.TestCase):
         self.assertIn(f'height: {page.height_mm:.3f}mm !important;', printable)
         self.assertIn('body > .page .patient-info .field', printable)
         self.assertEqual(printable.count('prescription-print-contract'), 1)
+
+    @patch("pipeline.html_render._render_with_weasyprint")
+    @patch("pipeline.html_render._render_with_playwright")
+    def test_chromium_is_preferred_for_consistent_multilingual_rendering(
+        self, playwright, weasyprint
+    ):
+        page = PageGeometry.from_pixels(100, 200)
+        playwright.return_value = ("chromium-image", b"chromium-pdf")
+
+        result = render_html(SCREEN_STYLE_HTML, page=page)
+
+        self.assertEqual(result, ("chromium-image", b"chromium-pdf"))
+        playwright.assert_called_once()
+        weasyprint.assert_not_called()
 
 
 if __name__ == "__main__":
