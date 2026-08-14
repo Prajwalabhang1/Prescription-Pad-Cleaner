@@ -217,7 +217,7 @@ class HybridReconstructionTests(unittest.TestCase):
         self.assertIn("source-watermark", html)
         self.assertNotIn('class="source-graphic-overlay source-artwork" src="data:image/png;base64,c2VhbA=="', html)
         self.assertIn("source-artwork", html)
-        self.assertIn(".source-watermark-layer { z-index:10", html)
+        self.assertIn(".source-watermark-layer { z-index:25", html)
         self.assertIn(":not(.source-graphics-layer) { position:relative; z-index:20", html)
         self.assertIn("object-fit:contain", html)
         self.assertIn("svg.header-logo, svg.watermark-bg", html)

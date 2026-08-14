@@ -69,9 +69,10 @@ def inject_source_graphics(
             continue
         box = element.box
         is_watermark = "watermark" in element.role.lower()
-        # Watermarks are transparent source-ink assets. They must be above an
-        # opaque generated page background, yet below identity artwork.
-        z_index = 10 if is_watermark else max(30, element.z_index)
+        # Generated layouts commonly use opaque body panels. Keep source
+        # watermarks above those panels, while preserving identity artwork at
+        # the top of the graphic stack.
+        z_index = 25 if is_watermark else max(40, element.z_index)
         opacity = element.opacity
         overlay = (
             '<img class="source-graphic-overlay '
@@ -91,8 +92,8 @@ def inject_source_graphics(
 body > .page, body > #prescription-page { position: relative !important; isolation: isolate; }
 body > .page > :not(.source-graphics-layer), body > #prescription-page > :not(.source-graphics-layer) { position:relative; z-index:20; }
 .source-graphics-layer { position:absolute !important; inset:0 !important; pointer-events:none !important; }
-.source-watermark-layer { z-index:10 !important; }
-.source-artwork-layer { z-index:30 !important; }
+.source-watermark-layer { z-index:25 !important; }
+.source-artwork-layer { z-index:40 !important; }
 .source-graphic-overlay { position:absolute !important; display:block !important; object-fit:contain !important; pointer-events:none !important; }
 .source-watermark { mix-blend-mode:multiply; }
 svg.header-logo, svg.watermark-bg { display:none !important; }
