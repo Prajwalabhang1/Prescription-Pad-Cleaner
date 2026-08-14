@@ -11,11 +11,11 @@ def get_gemini_api_key() -> str:
     session_key = st.session_state.get("gemini_api_key", "").strip()
     if session_key:
         return session_key
-    key = os.environ.get("GOOGLE_API_KEY")
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if key:
         return key
     try:
-        return st.secrets["GOOGLE_API_KEY"]
+        return st.secrets.get("GEMINI_API_KEY") or st.secrets["GOOGLE_API_KEY"]
     except Exception:
         raise RuntimeError(
             "GOOGLE_API_KEY not found. Set it as an env var or in "
@@ -43,8 +43,19 @@ def get_openrouter_api_key() -> str:
 
 
 def use_openrouter() -> bool:
-    """Whether AI requests should use OpenRouter for this session."""
-    return bool(get_openrouter_api_key())
+    """Use OpenRouter only when no direct Gemini key has been configured.
+
+    A user-provided Gemini key is an explicit provider choice. This avoids a
+    lingering OpenRouter environment variable silently taking precedence over
+    the key entered in the application sidebar.
+    """
+    openrouter_key = get_openrouter_api_key()
+    if not openrouter_key:
+        return False
+    try:
+        return not bool(get_gemini_api_key())
+    except RuntimeError:
+        return True
 
 # ---------------------------------------------------------------------------
 # Canva Connect API
