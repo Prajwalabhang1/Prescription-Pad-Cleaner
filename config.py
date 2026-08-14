@@ -31,7 +31,11 @@ def get_gemini_api_key() -> str:
         return session_key
 
     configured_keys = get_configured_gemini_api_keys()
-    selected_index = st.session_state.get("gemini_saved_key_index", 0)
+    # A configured key pool is an explicit manual setup. Start new sessions on
+    # its first key, while keeping subsequent changes entirely user-selected.
+    selected_index = st.session_state.get(
+        "gemini_saved_key_index", 1 if configured_keys else 0
+    )
     if isinstance(selected_index, int) and 1 <= selected_index <= len(configured_keys):
         return configured_keys[selected_index - 1]
 

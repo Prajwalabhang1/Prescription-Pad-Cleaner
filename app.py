@@ -174,6 +174,7 @@ with st.sidebar:
         st.selectbox(
             "Configured Gemini key",
             options=list(range(len(saved_gemini_keys) + 1)),
+            index=1,
             format_func=lambda index: (
                 "Default configured key" if index == 0 else f"Saved key {index}"
             ),
@@ -296,8 +297,9 @@ if uploaded:
                 editable_pdf = candidate_pdf
             except GeminiRateLimitError as error:
                 analysis_error = (
-                    "Editable text reconstruction is waiting on the configured AI provider. "
-                    f"{error} The restored source page remains available meanwhile."
+                    "Editable text reconstruction is waiting on the selected Gemini key. "
+                    f"{error} Choose another Saved key in Settings, then use Retry "
+                    "editable reconstruction. The restored source page remains available meanwhile."
                 )
             except Exception as error:
                 analysis_error = (
