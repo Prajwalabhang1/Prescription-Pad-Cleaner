@@ -6,11 +6,35 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 # Gemini
 # ---------------------------------------------------------------------------
+def get_configured_gemini_api_keys() -> tuple[str, ...]:
+    """Return manually selectable Gemini keys from local Streamlit secrets."""
+    try:
+        raw_keys = st.secrets.get("GEMINI_API_KEYS", ())
+    except Exception:
+        raw_keys = ()
+
+    if isinstance(raw_keys, str):
+        raw_keys = (raw_keys,)
+
+    keys: list[str] = []
+    for key in raw_keys:
+        normalized = str(key).strip()
+        if normalized and normalized not in keys:
+            keys.append(normalized)
+    return tuple(keys)
+
+
 def get_gemini_api_key() -> str:
     """Retrieve a session override first, then env or Streamlit secrets."""
     session_key = st.session_state.get("gemini_api_key", "").strip()
     if session_key:
         return session_key
+
+    configured_keys = get_configured_gemini_api_keys()
+    selected_index = st.session_state.get("gemini_saved_key_index", 0)
+    if isinstance(selected_index, int) and 1 <= selected_index <= len(configured_keys):
+        return configured_keys[selected_index - 1]
+
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if key:
         return key

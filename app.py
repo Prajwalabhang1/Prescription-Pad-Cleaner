@@ -14,6 +14,8 @@ if "DYLD_FALLBACK_LIBRARY_PATH" not in os.environ:
 
 import streamlit as st
 
+from config import get_configured_gemini_api_keys
+
 from pipeline.asset_reconstruction import (
     complete_graphic_bounds,
     reconstruct_assets,
@@ -117,6 +119,12 @@ def _set_session_api_key() -> None:
     _clear_pipeline()
 
 
+def _set_saved_gemini_key() -> None:
+    """Activate a user-selected local key without persisting it in session text."""
+    st.session_state.pop("gemini_api_key", None)
+    _clear_pipeline()
+
+
 def _data_uri_bytes(data_uri: str) -> bytes:
     return base64.b64decode(data_uri.split(",", 1)[1])
 
@@ -161,6 +169,18 @@ def _apply_artwork_adjustments() -> None:
 
 with st.sidebar:
     st.markdown("### Settings")
+    saved_gemini_keys = get_configured_gemini_api_keys()
+    if saved_gemini_keys:
+        st.selectbox(
+            "Configured Gemini key",
+            options=list(range(len(saved_gemini_keys) + 1)),
+            format_func=lambda index: (
+                "Default configured key" if index == 0 else f"Saved key {index}"
+            ),
+            key="gemini_saved_key_index",
+            on_change=_set_saved_gemini_key,
+            help="Choose a key manually after a quota error. Keys are never rotated automatically.",
+        )
     st.text_input(
         "Direct Gemini API key (optional)",
         type="password",
@@ -171,6 +191,8 @@ with st.sidebar:
     )
     if st.session_state.get("gemini_api_key"):
         st.caption("Session API key active")
+    elif saved_gemini_keys and st.session_state.get("gemini_saved_key_index", 0):
+        st.caption(f"Saved key {st.session_state['gemini_saved_key_index']} active")
     dpi = st.select_slider("Render DPI", options=[150, 200, 250, 300], value=300)
     use_manual_crop = st.toggle(
         "Manual page crop",
