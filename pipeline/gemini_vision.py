@@ -15,7 +15,7 @@ from google import genai
 from google.genai import types
 from PIL import Image
 
-from config import GEMINI_MODEL, get_gemini_api_key, use_openrouter
+from config import GEMINI_MODELS, get_gemini_api_key, use_openrouter
 from pipeline.page_geometry import PageGeometry
 from pipeline.openrouter import generate_openrouter_content
 
@@ -86,7 +86,7 @@ RETRY_OUTPUT_TOKENS = 24_576
 # detailed image + long HTML response. Leave the service enough time to finish
 # its final output tokens, while still bounding a request from the UI.
 GENERATION_TIMEOUT_MS = 150_000
-TRANSIENT_RETRY_DELAYS_SECONDS = (2, 5)
+TRANSIENT_RETRY_DELAYS_SECONDS = (4, 10)
 RETRY_IMAGE_MAX_DIMENSION = 1600
 MAX_RATE_LIMIT_WAIT_SECONDS = 60
 
@@ -285,13 +285,10 @@ def _generate_clean_html_openrouter(image_bytes: bytes, page: PageGeometry) -> s
     )
 
 
-def generate_clean_html(image_bytes: bytes, page: PageGeometry) -> str:
-    """
-    Send a prescription pad image to Gemini 3.6 Flash and return a
-    self-contained HTML/CSS reproduction of the pad.
-    """
-    if use_openrouter():
-        return _generate_clean_html_openrouter(image_bytes, page)
+def _generate_clean_html_gemini(
+    image_bytes: bytes, page: PageGeometry, model: str
+) -> str:
+    """Generate editable HTML with one selected direct Gemini model."""
     client = genai.Client(api_key=get_gemini_api_key())
 
     # Gemini 3 uses thinking levels rather than 2.5's token budgets. Medium
@@ -322,7 +319,7 @@ def generate_clean_html(image_bytes: bytes, page: PageGeometry) -> str:
 
         try:
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=model,
                 contents=[
                     types.Part.from_bytes(
                         data=request_image,
@@ -392,3 +389,28 @@ def generate_clean_html(image_bytes: bytes, page: PageGeometry) -> str:
         f"{MAX_GENERATION_ATTEMPTS} attempts (last finish reason: {reason}). "
         f"{last_error}"
     )
+
+
+def generate_clean_html(image_bytes: bytes, page: PageGeometry) -> str:
+    """Generate editable HTML with availability-aware direct Gemini failover."""
+    if use_openrouter():
+        return _generate_clean_html_openrouter(image_bytes, page)
+
+    transient_failures: list[tuple[str, Exception]] = []
+    for model in GEMINI_MODELS:
+        try:
+            return _generate_clean_html_gemini(image_bytes, page, model)
+        except GeminiRateLimitError:
+            # Quota belongs to the key rather than a temporarily busy model.
+            raise
+        except RuntimeError as exc:
+            if not _is_transient_api_error(exc):
+                raise
+            transient_failures.append((model, exc))
+
+    tried = ", ".join(model for model, _ in transient_failures)
+    last_error = transient_failures[-1][1]
+    raise RuntimeError(
+        "Gemini is temporarily unavailable after retries on "
+        f"{tried}. Please try again shortly. Last error: {last_error}"
+    ) from last_error

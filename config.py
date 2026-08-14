@@ -27,6 +27,11 @@ def get_gemini_api_key() -> str:
 # is Google's current production replacement with stronger multimodal and
 # spatial reasoning for document reconstruction.
 GEMINI_MODEL = "gemini-3.6-flash"
+# Use the next strongest free-tier multimodal option only when the primary
+# endpoint is temporarily unavailable. The primary remains the accuracy-first
+# choice for every normal reconstruction.
+GEMINI_FALLBACK_MODELS = ("gemini-3.5-flash",)
+GEMINI_MODELS = (GEMINI_MODEL, *GEMINI_FALLBACK_MODELS)
 
 # OpenRouter provides a single OpenAI-compatible gateway to vision-capable
 # models. It takes priority when a key is supplied, allowing the app to switch

@@ -97,7 +97,7 @@ class GeminiVisionTests(unittest.TestCase):
 
         self.assertEqual(html, COMPLETE_HTML)
         self.assertEqual(len(models.calls), 2)
-        sleep.assert_called_once_with(2)
+        sleep.assert_called_once_with(4)
         self.assertEqual(
             models.calls[0]["contents"][0].inline_data.mime_type, "image/png"
         )
@@ -126,6 +126,30 @@ class GeminiVisionTests(unittest.TestCase):
         sleep.assert_called_once_with(46)
         self.assertEqual(
             models.calls[1]["contents"][0].inline_data.mime_type, "image/png"
+        )
+
+    @patch("pipeline.gemini_vision.time.sleep")
+    @patch("pipeline.gemini_vision.get_gemini_api_key", return_value="test-key")
+    @patch("pipeline.gemini_vision.genai.Client")
+    def test_generation_uses_free_tier_fallback_after_primary_503(
+        self, client_class, _key, _sleep
+    ):
+        models = _FakeModels([
+            RuntimeError("503 UNAVAILABLE: temporary high demand"),
+            RuntimeError("503 UNAVAILABLE: temporary high demand"),
+            RuntimeError("503 UNAVAILABLE: temporary high demand"),
+            SimpleNamespace(text=COMPLETE_HTML, candidates=[]),
+        ])
+        client_class.return_value = SimpleNamespace(models=models)
+
+        html = gemini_vision.generate_clean_html(
+            b"test image", page=PageGeometry.from_pixels(100, 200)
+        )
+
+        self.assertEqual(html, COMPLETE_HTML)
+        self.assertEqual(
+            [call["model"] for call in models.calls],
+            ["gemini-3.6-flash"] * 3 + ["gemini-3.5-flash"],
         )
 
 if __name__ == "__main__":
