@@ -357,6 +357,13 @@ if uploaded:
         st.warning(warning)
     if state.analysis_error:
         st.warning(state.analysis_error)
+        if st.button(
+            "Retry editable reconstruction",
+            type="primary",
+            use_container_width=True,
+        ):
+            _clear_pipeline()
+            st.rerun()
 
     if state.artwork_assets:
         with st.expander("Extracted artwork review", expanded=False):
