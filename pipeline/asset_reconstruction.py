@@ -209,14 +209,14 @@ def sanitize_graphics(manifest: DocumentManifest) -> tuple[DocumentManifest, tup
             elif box.y < 0.16 or box.height < 0.12:
                 warnings.append(f"Ignored {element.id}: watermark candidate overlaps the header or is too small.")
                 continue
-            elif box.y > 0.55:
-                warnings.append(f"Ignored {element.id}: watermark candidate is in the bottom footer region.")
+            elif box.y > 0.48:
+                warnings.append(f"Ignored {element.id}: watermark candidate top edge is too low ({box.y:.2f}).")
                 continue
-            elif box.width > 0.50 and (box.width / box.height > 2.2):
-                warnings.append(f"Ignored {element.id}: watermark candidate is a wide rectangle ({box.width:.2f}x{box.height:.2f}), likely hallucinated text.")
+            elif box.width / box.height > 1.7 or box.width / box.height < 0.5:
+                warnings.append(f"Ignored {element.id}: watermark candidate has text-like aspect ratio ({box.width/box.height:.2f}).")
                 continue
-            elif box.width > 0.88 or box.height > 0.78 or area > 0.58:
-                warnings.append(f"Ignored {element.id}: watermark candidate is too broad ({box.width:.2f}x{box.height:.2f}) and encloses printed document text.")
+            elif box.width > 0.65 or box.height > 0.75 or area > 0.50:
+                warnings.append(f"Ignored {element.id}: watermark candidate is too broad ({box.width:.2f}x{box.height:.2f}), likely encloses text.")
                 continue
         if family in {"logo", "seal"}:
             if box.y > 0.42 or area > 0.20:
@@ -302,6 +302,14 @@ def _clean_paper_background(crop: Image.Image, is_watermark: bool = False, max_o
     height, width = rgb.shape[:2]
 
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    
+    if is_watermark:
+        edges = cv2.Canny(gray.astype(np.uint8), 40, 120)
+        edge_density = np.sum(edges > 0) / edges.size
+        if edge_density > 0.05:
+            # Too many sharp edges; this is a block of text hallucinated as a watermark!
+            return Image.new("RGBA", crop.size, (0, 0, 0, 0))
+
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
     saturation = hsv[:, :, 1]
 
