@@ -7,7 +7,11 @@ from typing import Any
 
 import requests
 
-from config import OPENROUTER_MODEL, get_openrouter_api_key
+from config import (
+    OPENROUTER_FALLBACK_MODEL,
+    OPENROUTER_MODEL,
+    get_openrouter_api_key,
+)
 
 
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -28,7 +32,9 @@ def _response_message(response: requests.Response) -> str:
     return str(error or response.reason)
 
 
-def generate_openrouter_content(
+def _send_openrouter_request(
+    api_key: str,
+    model: str,
     image_bytes: bytes,
     image_mime_type: str,
     system_instruction: str,
@@ -36,13 +42,9 @@ def generate_openrouter_content(
     max_tokens: int,
     response_format: dict[str, str] | None = None,
 ) -> str:
-    """Send one image-and-text request through OpenRouter and return text."""
-    api_key = get_openrouter_api_key()
-    if not api_key:
-        raise OpenRouterRequestError("OPENROUTER_API_KEY is not configured.")
     image_data = base64.b64encode(image_bytes).decode("ascii")
     payload: dict[str, Any] = {
-        "model": OPENROUTER_MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": system_instruction},
             {
@@ -92,3 +94,49 @@ def generate_openrouter_content(
     if not isinstance(content, str) or not content.strip():
         raise OpenRouterRequestError("OpenRouter returned an empty completion.")
     return content.strip()
+
+
+def generate_openrouter_content(
+    image_bytes: bytes,
+    image_mime_type: str,
+    system_instruction: str,
+    user_instruction: str,
+    max_tokens: int,
+    response_format: dict[str, str] | None = None,
+    model: str | None = None,
+) -> str:
+    """Send one image-and-text request through OpenRouter and return text."""
+    api_key = get_openrouter_api_key()
+    if not api_key:
+        raise OpenRouterRequestError("OPENROUTER_API_KEY is not configured.")
+
+    primary_model = model or OPENROUTER_MODEL
+    try:
+        return _send_openrouter_request(
+            api_key,
+            primary_model,
+            image_bytes,
+            image_mime_type,
+            system_instruction,
+            user_instruction,
+            max_tokens,
+            response_format,
+        )
+    except OpenRouterRequestError as exc:
+        fallback_model = OPENROUTER_FALLBACK_MODEL
+        if fallback_model and fallback_model != primary_model and not model:
+            try:
+                return _send_openrouter_request(
+                    api_key,
+                    fallback_model,
+                    image_bytes,
+                    image_mime_type,
+                    system_instruction,
+                    user_instruction,
+                    max_tokens,
+                    response_format,
+                )
+            except Exception:
+                pass
+        raise exc
+

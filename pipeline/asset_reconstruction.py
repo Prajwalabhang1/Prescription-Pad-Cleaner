@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import cv2
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 from pipeline.document_manifest import DocumentManifest, NormalizedBox
 
@@ -79,6 +79,9 @@ def _intersection_over_union(first: NormalizedBox, second: NormalizedBox) -> flo
     return intersection / union if union else 0.0
 
 
+
+
+
 def _find_logo_circle(rgb: np.ndarray, proposal: NormalizedBox) -> NormalizedBox | None:
     """Find a complete top-left circular emblem without including header text."""
     height, width = rgb.shape[:2]
@@ -97,16 +100,18 @@ def _find_logo_circle(rgb: np.ndarray, proposal: NormalizedBox) -> NormalizedBox
     )
     if circles is None:
         return None
-    # Model bboxes often drift downward into the doctor-details row. A clinic
-    # emblem found in this search region is normally anchored close to the top
-    # left, so use that stable page landmark rather than the unreliable bbox.
-    target_x = max((proposal.x + proposal.width / 2) * width, width * 0.115)
-    target_y = min((proposal.y + proposal.height / 2) * height, height * 0.085)
+    target_x = (proposal.x + proposal.width / 2) * width
+    target_y = (proposal.y + proposal.height / 2) * height
     best: tuple[float, NormalizedBox] | None = None
     for center_x, center_y, radius in np.round(circles[0]).astype(int):
         if center_x - radius <= 1 or center_y - radius <= 1:
             continue
         if center_x + radius >= right_limit - 1 or center_y + radius >= bottom_limit - 1:
+            continue
+        target_x = (proposal.x + proposal.width / 2) * width
+        target_y = (proposal.y + proposal.height / 2) * height
+        center_error = abs(center_x - target_x) / width + abs(center_y - target_y) / height
+        if center_error > 0.09:
             continue
         candidate = _box_from_pixels(
             center_x - radius,
@@ -116,21 +121,15 @@ def _find_logo_circle(rgb: np.ndarray, proposal: NormalizedBox) -> NormalizedBox
             width,
             height,
         )
-        score = (
-            abs(center_x - target_x) / width
-            + abs(center_y - target_y) / height
-            + abs(candidate.width - proposal.width) * 0.35
-        )
+        if _intersection_over_union(candidate, proposal) < 0.15:
+            continue
+        radius_error = abs((radius * 2) / width - proposal.width)
+        score = center_error * 2.0 + radius_error
         if best is None or score < best[0]:
             best = (score, candidate)
     if best is None:
         return None
-    # Keep one narrow paper margin around the emblem, never enough to include
-    # the adjacent hospital name.
-    # Hough tends to lock on the inner decorative ring. The transparent asset
-    # can safely include paper margin, so expand through the complete outer
-    # circle rather than clipping the logo's right and lower edges.
-    return _expanded_box(best[1], 0.021, 0.012)
+    return _expanded_box(best[1], 0.006, 0.006)
 
 
 def _find_watermark_circle(rgb: np.ndarray, proposal: NormalizedBox) -> NormalizedBox | None:
@@ -203,16 +202,23 @@ def sanitize_graphics(manifest: DocumentManifest) -> tuple[DocumentManifest, tup
         box = element.box
         area = box.width * box.height
         if family == "watermark":
-            # Header text frequently gets mislabeled as a watermark. Genuine
-            # background artwork belongs in the writable page body and must be
-            # large enough to be visible as a watermark.
-            if box.y < 0.16 or box.height < 0.12:
-                warnings.append(f"Ignored {element.id}: watermark candidate overlaps the header.")
+            # Header artwork (y < 0.25) is a logo/emblem, not a background watermark.
+            if box.y < 0.25 and box.width < 0.50:
+                element = replace(element, role="logo", opacity=1.0)
+                family = "logo"
+            elif box.y < 0.16 or box.height < 0.12:
+                warnings.append(f"Ignored {element.id}: watermark candidate overlaps the header or is too small.")
                 continue
-            if box.width > 0.94 and box.height < 0.28:
-                warnings.append(f"Ignored {element.id}: wide text strip is not watermark artwork.")
+            elif box.y > 0.55:
+                warnings.append(f"Ignored {element.id}: watermark candidate is in the bottom footer region.")
                 continue
-        elif family in {"logo", "seal"}:
+            elif box.width > 0.50 and (box.width / box.height > 2.2):
+                warnings.append(f"Ignored {element.id}: watermark candidate is a wide rectangle ({box.width:.2f}x{box.height:.2f}), likely hallucinated text.")
+                continue
+            elif box.width > 0.88 or box.height > 0.78 or area > 0.58:
+                warnings.append(f"Ignored {element.id}: watermark candidate is too broad ({box.width:.2f}x{box.height:.2f}) and encloses printed document text.")
+                continue
+        if family in {"logo", "seal"}:
             if box.y > 0.42 or area > 0.20:
                 warnings.append(f"Ignored {element.id}: logo candidate has implausible page coverage.")
                 continue
@@ -236,13 +242,11 @@ def complete_graphic_bounds(source: Image.Image, manifest: DocumentManifest) -> 
         role = _role_family(element.role)
         box = element.box
         if role == "seal" or (role == "logo" and _is_near_square(box)):
-            box = _find_logo_circle(rgb, box) or _expanded_box(box, 0.008, 0.008)
+            box = _find_logo_circle(rgb, box) or (
+                _expanded_box(box, 0.008, 0.008) if role == "seal" else box
+            )
         elif role == "watermark":
             watermark_kind = _watermark_kind(element.role)
-            # Portrait watermarks are usually broad, faint photographs. Running
-            # Hough circles on them can swap their real bounds for an unrelated
-            # facial feature or seal, which is the cause of the clipped centre
-            # artwork in several photographed pads.
             box = (
                 _find_watermark_circle(rgb, box)
                 if watermark_kind != "photo" and _is_near_square(box)
@@ -251,12 +255,11 @@ def complete_graphic_bounds(source: Image.Image, manifest: DocumentManifest) -> 
             if box is None:
                 box = _expanded_box(element.box, 0.012, 0.012)
         else:
-            # Preserve non-circular colored logos and medical icons without
-            # pulling nearby hospital text into their source crop.
             box = _expanded_box(box, 0.004, 0.004)
         opacity = 1.0 if role == "watermark" else element.opacity
         corrected.append(replace(element, box=box, opacity=opacity))
     return replace(manifest, elements=tuple(corrected))
+
 
 
 def _crop_box(image: Image.Image, box) -> tuple[int, int, int, int]:
@@ -289,61 +292,99 @@ def _restore_asset(crop: Image.Image, role: str) -> Image.Image:
     return output
 
 
-def _transparent_logo(crop: Image.Image) -> Image.Image:
-    """Keep logo ink while removing the rectangular paper crop around it."""
+def _clean_paper_background(crop: Image.Image, is_watermark: bool = False, max_opacity: float = 1.0) -> Image.Image:
+    """Preprocess logo / watermark asset:
+    1. White balance & remove local paper lighting/tint.
+    2. Isolate logo ink / artwork lines.
+    3. Enhance color contrast, saturation, and sharpness.
+    """
     rgb = np.asarray(crop.convert("RGB"))
+    height, width = rgb.shape[:2]
+
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
-    saturation = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)[:, :, 1].astype(np.float32)
-    darkness = np.clip((242.0 - gray) / 92.0, 0.0, 1.0)
-    color = np.clip((saturation - 12.0) / 95.0, 0.0, 1.0)
-    alpha = np.maximum(darkness, color)
-    alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=0.55)
-    rgba = np.dstack((rgb, np.round(alpha * 255).astype(np.uint8)))
-    return Image.fromarray(rgba)
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
+    saturation = hsv[:, :, 1]
+
+    # Estimate local paper background lightness and saturation
+    blur_k = max(15, round(min(width, height) * 0.35))
+    if blur_k % 2 == 0:
+        blur_k += 1
+    paper_bg_gray = cv2.GaussianBlur(gray, (blur_k, blur_k), 0)
+    paper_bg_sat = cv2.GaussianBlur(saturation, (blur_k, blur_k), 0)
+
+    # Difference relative to paper background
+    ink_luma_diff = np.maximum(paper_bg_gray - gray, 0.0)
+    ink_sat_diff = np.maximum(saturation - paper_bg_sat, 0.0)
+
+    if is_watermark:
+        # Faint line artwork / watermark in main body
+        alpha_luma = np.clip((ink_luma_diff - 2.0) / 22.0, 0.0, max_opacity)
+        alpha_sat = np.clip((ink_sat_diff - 3.0) / 25.0, 0.0, max_opacity)
+        alpha = np.maximum(alpha_luma, alpha_sat)
+    else:
+        # Header Logo / Icon
+        alpha_luma = np.clip((ink_luma_diff - 8.0) / 28.0, 0.0, 1.0)
+        alpha_sat = np.clip((ink_sat_diff - 12.0) / 30.0, 0.0, 1.0)
+        alpha = np.maximum(alpha_luma, alpha_sat)
+
+    # Edge feathering
+    feather = max(2, round(min(width, height) * 0.03))
+    edge_mask = np.ones((height, width), dtype=np.float32)
+    ramp = np.linspace(0.0, 1.0, feather, endpoint=True)
+    edge_mask[:feather, :] *= ramp[:, None]
+    edge_mask[-feather:, :] *= ramp[::-1, None]
+    edge_mask[:, :feather] *= ramp[None, :]
+    edge_mask[:, -feather:] *= ramp[None, ::-1]
+    alpha = alpha * edge_mask
+    alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=0.45)
+
+    # White balance against estimated paper background so paper tint becomes clean
+    normalized_rgb = rgb.astype(np.float32)
+    for c in range(3):
+        bg_c = cv2.GaussianBlur(normalized_rgb[:, :, c], (blur_k, blur_k), 0)
+        bg_c = np.maximum(bg_c, 1.0)
+        normalized_rgb[:, :, c] = np.clip(normalized_rgb[:, :, c] * (255.0 / bg_c), 0.0, 255.0)
+
+    clean_rgb = Image.fromarray(normalized_rgb.astype(np.uint8))
+    clean_rgb = ImageEnhance.Color(clean_rgb).enhance(1.30)
+    clean_rgb = ImageEnhance.Contrast(clean_rgb).enhance(1.20)
+    clean_rgb = clean_rgb.filter(ImageFilter.UnsharpMask(radius=1.0, percent=85, threshold=2))
+
+    rgba = clean_rgb.convert("RGBA")
+    rgba.putalpha(Image.fromarray(np.round(alpha * 255).astype(np.uint8)))
+    return rgba
+
+
+def _transparent_logo(crop: Image.Image) -> Image.Image:
+    return _clean_paper_background(crop, is_watermark=False, max_opacity=1.0)
 
 
 def _transparent_watermark(crop: Image.Image, max_opacity: float = 0.38) -> Image.Image:
-    """Extract faint watermark ink as a soft alpha layer, not white paper."""
-    rgb = np.asarray(crop.convert("RGB"))
-    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
-    # A broad local background estimates the paper illumination. This preserves
-    # light gray artwork while rejecting page white and camera shading.
-    background = cv2.GaussianBlur(gray, (0, 0), sigmaX=max(14, crop.width / 18))
-    ink = np.maximum(background - gray, 0.0)
-    saturation = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)[:, :, 1].astype(np.float32)
-    alpha = np.maximum(
-        np.clip((ink - 1.0) / 62.0, 0.0, max_opacity),
-        np.clip(saturation / 510.0, 0.0, min(0.12, max_opacity)),
-    )
-    alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=0.7)
-    # This is a printed background seal, not foreground artwork. Keep the
-    # original photograph/shading but cap ink opacity to the pale source level.
-    alpha = np.minimum(alpha, max_opacity)
-    rgba = np.dstack((rgb, np.round(alpha * 255).astype(np.uint8)))
-    return Image.fromarray(rgba)
+    return _clean_paper_background(crop, is_watermark=True, max_opacity=max_opacity)
 
 
 def _transparent_photo_watermark(crop: Image.Image) -> Image.Image:
-    """Keep a faded portrait soft without adding its white paper rectangle."""
-    rgba = _transparent_watermark(crop, max_opacity=0.28)
-    alpha = np.asarray(rgba.getchannel("A"), dtype=np.float32) / 255.0
-    # Faint photographic marks should dissolve at their crop boundary. This
-    # avoids a visible rectangular edge when the source has uneven lighting.
-    height, width = alpha.shape
-    feather = max(3, round(min(width, height) * 0.045))
-    edge = np.ones((height, width), dtype=np.float32)
-    ramp = np.linspace(0.0, 1.0, feather, endpoint=True)
-    edge[:feather, :] *= ramp[:, None]
-    edge[-feather:, :] *= ramp[::-1, None]
-    edge[:, :feather] *= ramp[None, :]
-    edge[:, -feather:] *= ramp[None, ::-1]
-    alpha = cv2.GaussianBlur(alpha * edge, (0, 0), sigmaX=0.45)
-    rgba.putalpha(Image.fromarray(np.round(alpha * 255).astype(np.uint8)))
+    return _clean_paper_background(crop, is_watermark=True, max_opacity=0.28)
+
+
+def _crop_circular_photo(crop: Image.Image) -> Image.Image:
+    """Keep the full RGB photo inside a clean circular mask, removing square crop corners."""
+    rgb = crop.convert("RGB")
+    width, height = rgb.size
+
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, width, height), fill=255)
+
+    rgba = rgb.copy()
+    rgba.putalpha(mask)
     return rgba
 
 
 def _asset_with_alpha(crop: Image.Image, role: str) -> Image.Image:
     family = _role_family(role)
+    if "photo" in role and "watermark" not in role:
+        return _crop_circular_photo(crop)
     if family in {"logo", "seal", "signature"}:
         return _transparent_logo(crop)
     if family == "watermark":
@@ -351,6 +392,7 @@ def _asset_with_alpha(crop: Image.Image, role: str) -> Image.Image:
             return _transparent_photo_watermark(crop)
         return _transparent_watermark(crop)
     return _restore_asset(crop, role)
+
 
 
 def _data_uri(image: Image.Image) -> str:

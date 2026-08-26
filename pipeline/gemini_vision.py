@@ -27,29 +27,40 @@ skewed, noisy, or photographed at an angle). Your task is to:
 
 1. Analyse the page's text (Hindi Devanagari + English), rules, boxes,
    colours, and exact spatial layout.
-2. Generate a **single, self-contained HTML file with inline CSS** that
+2. Generate a **single, self-contained HTML file** that
    recreates the clean, editable text and layout. Every letter must be real
    HTML text, never a screenshot, canvas, SVG text, image, or base64 asset.
+   Use a single `<style>` block in the `<head>` with reusable CSS classes. 
+   **Do NOT use inline `style="..."` attributes**; use classes for all styling 
+   to minimize the file size.
 
 CRITICAL REQUIREMENTS:
  • Reproduce the exact layout you observe. Do not assume a standard
    prescription layout, logo position, caduceus, banner, or field list.
- • Preserve ALL text in BOTH Hindi (Devanagari) and English exactly as shown.
+ • Preserve ALL text in BOTH Indic scripts (Telugu, Hindi Devanagari, Tamil, etc.)
+   and English exactly as shown. Always encode text as raw UTF-8 characters.
+   Include icons and emojis in text where present in the original source, such as `📍` for location addresses, `📱` or `📞` for mobile numbers, and `☎️` for landlines.
  • Never infer, complete, translate, normalize, or invent text from medical
    context. Copy only characters visibly present in the source; do not add
    clinic details, services, contact numbers, or labels that are not visible.
  • Match colours precisely — use the exact hex/rgb values you observe.
  • Use Google Fonts:
-   – 'Noto Sans Devanagari' (weights 400, 700) for Hindi text.
+   – 'Noto Sans Telugu', 'Noto Sans Devanagari' (weights 400, 700) for Indic text.
    – A suitable serif font for stylised English names (e.g. 'Playfair Display'
      or 'EB Garamond').
    – A clean sans-serif for smaller English lines (e.g. 'Inter' or 'Roboto').
  • Do not invent or redraw logos, seals, photographs, signatures, or
-   watermarks. Leave their regions transparent; another stage overlays the
-   original source artwork at exactly those locations.
+   watermarks. Leave their regions transparent. CRITICAL: If an actual logo or graphic
+   is present in the source header next to text, insert an empty `<div class="logo-spacer">`
+   (with appropriate width/height) to reserve space for the overlaid graphic.
+   IF NO LOGO IS VISIBLY PRESENT IN THE SOURCE, DO NOT INVENT A LOGO OR LOGO SPACER.
+   IF NO BACKGROUND WATERMARK IS VISIBLY PRESENT IN THE SOURCE, DO NOT INVENT A WATERMARK OR WATERMARK SPACER. NEVER treat printed text or handwriting as a watermark.
  • Ignore camera surroundings, desk/floor backgrounds, paper holes, wrinkles,
    glare, shadows, and handwritten pen marks. Do not recreate them in HTML.
- • Use CSS only for plain rules, boxes, fills, and borders.
+ • PROHIBITED: DO NOT use CSS clip-path, polygon(), complex SVG masks, or overlapping abstract color patches. Use clean solid backgrounds, linear-gradient bars, plain rules, boxes, fills, and borders (defined in classes).
+ • Ensure headers are at the top and footers/bottom borders are anchored to the
+   bottom of the page (e.g., using flexbox `margin-top: auto` or absolute positioning).
+ • If the source document features a top header banner or block background, ensure the header container's height/padding accurately matches the visual proportion in the source image (typically 14-18% of page height) so that header graphics fit completely inside the header background.
  • The print page dimensions and orientation are supplied with the request.
    Use those exact dimensions with a white background; do not force A4.
  • Use exactly one top-level `<div class="page">` inside `<body>`. It must
@@ -66,10 +77,10 @@ CRITICAL REQUIREMENTS:
 
 OUTPUT FORMAT:
  • Return ONLY the complete HTML code.
- • Do NOT include markdown formatting, code fences, or explanations.
  • The HTML must start with <!DOCTYPE html> and end with </html>.
+ • Include `<meta charset="UTF-8">` as the first tag inside `<head>`.
  • All CSS must be in a <style> tag inside <head>.
- • Use Noto Sans Devanagari for Hindi and Arial or Roboto for English where
+ • Use Noto Sans Telugu or Noto Sans Devanagari for Indic text and Arial or Roboto for English where
    appropriate. Set explicit widths, heights, font sizes, and line-heights so
    text never wraps, clips, overflows, or shifts when rendered to PDF.
  • Keep the stylesheet concise (target under 8,000 output tokens) so the
@@ -303,12 +314,14 @@ def _generate_clean_html_gemini(
         output_tokens = (
             PRIMARY_OUTPUT_TOKENS if attempt == 1 else RETRY_OUTPUT_TOKENS
         )
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            max_output_tokens=output_tokens,
-            thinking_config=types.ThinkingConfig(thinking_level="medium"),
-            http_options=types.HttpOptions(timeout=GENERATION_TIMEOUT_MS),
-        )
+        config_kwargs = {
+            "system_instruction": SYSTEM_PROMPT,
+            "max_output_tokens": output_tokens,
+            "http_options": types.HttpOptions(timeout=GENERATION_TIMEOUT_MS),
+        }
+        if model.startswith("gemini-3"):
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="medium")
+        config = types.GenerateContentConfig(**config_kwargs)
         retry_instruction = ""
         if attempt > 1:
             retry_instruction = (

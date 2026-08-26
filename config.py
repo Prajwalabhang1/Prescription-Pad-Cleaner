@@ -51,20 +51,14 @@ def get_gemini_api_key() -> str:
         )
 
 
-# Gemini 2.5 Flash is unavailable to new Gemini API users. Gemini 3.6 Flash
-# is Google's current production replacement with stronger multimodal and
-# spatial reasoning for document reconstruction.
-GEMINI_MODEL = "gemini-3.6-flash"
-# Use the next strongest free-tier multimodal option only when the primary
-# endpoint is temporarily unavailable. The primary remains the accuracy-first
-# choice for every normal reconstruction.
-GEMINI_FALLBACK_MODELS = ("gemini-3.5-flash",)
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-pro")
 GEMINI_MODELS = (GEMINI_MODEL, *GEMINI_FALLBACK_MODELS)
 
-# OpenRouter provides a single OpenAI-compatible gateway to vision-capable
-# models. It takes priority when a key is supplied, allowing the app to switch
-# providers without changing reconstruction code or storing a key on disk.
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-3.1-pro-preview")
+OPENROUTER_FALLBACK_MODEL = os.environ.get(
+    "OPENROUTER_FALLBACK_MODEL", "google/gemini-3.7-flash"
+)
 
 
 def get_openrouter_api_key() -> str:
@@ -72,23 +66,27 @@ def get_openrouter_api_key() -> str:
     session_key = st.session_state.get("openrouter_api_key", "").strip()
     if session_key:
         return session_key
+    try:
+        secret_key = st.secrets.get("OPENROUTER_API_KEY", "").strip()
+        if secret_key:
+            return secret_key
+    except Exception:
+        pass
     return os.environ.get("OPENROUTER_API_KEY", "").strip()
 
 
 def use_openrouter() -> bool:
-    """Use OpenRouter only when no direct Gemini key has been configured.
-
-    A user-provided Gemini key is an explicit provider choice. This avoids a
-    lingering OpenRouter environment variable silently taking precedence over
-    the key entered in the application sidebar.
-    """
-    openrouter_key = get_openrouter_api_key()
-    if not openrouter_key:
+    """Use OpenRouter when an OpenRouter key has been configured and no direct Gemini key is available (or AI_PROVIDER is openrouter)."""
+    if st.session_state.get("gemini_api_key"):
         return False
+    if os.environ.get("AI_PROVIDER", "").lower() == "openrouter":
+        return bool(get_openrouter_api_key())
     try:
-        return not bool(get_gemini_api_key())
-    except RuntimeError:
-        return True
+        if get_gemini_api_key():
+            return False
+    except Exception:
+        pass
+    return bool(get_openrouter_api_key())
 
 # ---------------------------------------------------------------------------
 # Canva Connect API

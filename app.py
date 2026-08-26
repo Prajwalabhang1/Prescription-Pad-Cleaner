@@ -7,12 +7,15 @@ import base64
 from dataclasses import replace
 import hashlib
 import os
+import time
 
 # Keep the original macOS native-library fallback for WeasyPrint users.
 if "DYLD_FALLBACK_LIBRARY_PATH" not in os.environ:
     os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = "/opt/homebrew/lib"
 
 import streamlit as st
+import streamlit.components.v1 as components
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 from config import get_configured_gemini_api_keys
 
@@ -21,7 +24,7 @@ from pipeline.asset_reconstruction import (
     reconstruct_assets,
     sanitize_graphics,
 )
-from pipeline.browser_editor import build_editor_html, publish_editor_html
+from pipeline.browser_editor import build_editor_html, editor_data_uri, publish_editor_html
 from pipeline.document_analyzer import analyze_graphics
 from pipeline.document_manifest import DocumentManifest, NormalizedBox
 from pipeline.gemini_vision import GeminiRateLimitError, generate_clean_html
@@ -244,68 +247,94 @@ if uploaded:
         if not st.button("Start processing", type="primary", use_container_width=True):
             st.stop()
 
-        with st.spinner("Detecting and rectifying the prescription page..."):
+        with st.status("Processing prescription...", expanded=True) as status:
+            progress_bar = st.progress(0, text="Detecting and rectifying the prescription page...")
+            pipeline_start_time = time.time()
+            
             try:
+                start_time = time.time()
                 processed = preprocess_document(image_bytes, manual_crop=manual_crop)
                 source_page = PageGeometry.from_pixels(*processed.page_size)
+                elapsed = time.time() - start_time
+                st.write(f"✅ Detecting and rectifying complete ({elapsed:.1f}s)")
             except Exception as error:
+                status.update(label="Pipeline failed", state="error", expanded=True)
                 st.error(f"The uploaded image could not be prepared: {error}")
                 st.stop()
 
-        with st.spinner("Creating maximum-fidelity print artwork..."):
+            progress_bar.progress(25, text="Creating maximum-fidelity print artwork...")
             try:
+                start_time = time.time()
                 fidelity_html = build_fidelity_html(processed.restored, source_page)
                 result_img, pdf_bytes = render_html(fidelity_html, dpi, source_page)
                 fidelity_score = compare_images(processed.restored, result_img)
+                elapsed = time.time() - start_time
+                st.write(f"✅ Fidelity artwork complete ({elapsed:.1f}s)")
             except Exception as error:
+                status.update(label="Pipeline failed", state="error", expanded=True)
                 st.error(f"High-fidelity rendering failed: {error}")
                 st.stop()
 
-        analysis_error = ""
-        editable_html = fidelity_html
-        editable_img = result_img
-        editable_score = fidelity_score
-        editable_pdf = pdf_bytes
+            analysis_error = ""
+            editable_html = fidelity_html
+            editable_img = result_img
+            editable_score = fidelity_score
+            editable_pdf = pdf_bytes
 
-        with st.spinner("Generating editable text and restoring source artwork in parallel..."):
+            progress_bar.progress(50, text="Generating editable text and restoring source artwork in parallel...")
             try:
+                start_time = time.time()
                 analysis_bytes = pil_to_bytes(processed.analysis)
-                # The dedicated text-only HTML reconstruction gives richer
-                # multilingual transcription than a compact element manifest.
-                # Artwork measurement runs concurrently and remains source-derived.
+                ctx = get_script_run_ctx()
+
+                def _run_text():
+                    add_script_run_ctx(ctx=ctx)
+                    return generate_clean_html(analysis_bytes, source_page)
+
+                def _run_graphics():
+                    add_script_run_ctx(ctx=ctx)
+                    return analyze_graphics(analysis_bytes, source_page)
+
                 with ThreadPoolExecutor(max_workers=2) as executor:
-                    text_future = executor.submit(
-                        generate_clean_html, analysis_bytes, source_page
-                    )
-                    graphics_future = executor.submit(
-                        analyze_graphics, analysis_bytes, source_page
-                    )
+                    text_future = executor.submit(_run_text)
+                    graphics_future = executor.submit(_run_graphics)
                     text_html = prepare_print_html(text_future.result(), source_page)
                     graphics, artwork_warnings = sanitize_graphics(graphics_future.result())
                 graphics = complete_graphic_bounds(processed.canonical, graphics)
-                # Artwork is cropped from the unenhanced rectified source so its
-                # original identity, color, and fine detail are not regenerated.
                 assets = reconstruct_assets(processed.canonical, graphics)
                 candidate_html = inject_source_graphics(
                     text_html, graphics, assets, source_page
                 )
+                elapsed_generation = time.time() - start_time
+                st.write(f"✅ AI Text & Graphics generation complete ({elapsed_generation:.1f}s)")
+                
+                progress_bar.progress(75, text="Rendering final output HTML & assets...")
+                start_time = time.time()
                 candidate_img, candidate_pdf = render_html(candidate_html, dpi, source_page)
                 candidate_score = compare_images(processed.restored, candidate_img)
                 editable_html = candidate_html
                 editable_img = candidate_img
                 editable_score = candidate_score
                 editable_pdf = candidate_pdf
+                elapsed_rendering = time.time() - start_time
+                st.write(f"✅ Final rendering complete ({elapsed_rendering:.1f}s)")
+                progress_bar.progress(100, text="Pipeline complete")
             except GeminiRateLimitError as error:
                 analysis_error = (
                     "Editable text reconstruction is waiting on the selected Gemini key. "
                     f"{error} Choose another Saved key in Settings, then use Retry "
                     "editable reconstruction. The restored source page remains available meanwhile."
                 )
+                st.warning(f"Editable text generation skipped due to quota: {error}")
             except Exception as error:
                 analysis_error = (
                     "Editable text reconstruction was unavailable, so the editor uses "
                     f"the faithful restored page. Details: {error}"
                 )
+                st.warning(f"Editable text generation failed: {error}")
+                
+            total_time = time.time() - pipeline_start_time
+            status.update(label=f"Processing complete in {total_time:.1f}s!", state="complete", expanded=False)
 
         try:
             editor_html = build_editor_html(editable_html)
@@ -420,9 +449,12 @@ if uploaded:
                 _apply_artwork_adjustments()
                 st.rerun()
 
-    editable_tab, difference_tab = st.tabs(
-        ["Editable reconstruction", "Difference heatmap"]
+    editor_tab, editable_tab, difference_tab = st.tabs(
+        ["Interactive Browser Editor", "Editable preview", "Difference heatmap"]
     )
+    with editor_tab:
+        st.caption("Click any text line to edit text directly. Drag images or use controls to reposition elements.")
+        components.html(state.editor_html, height=850, scrolling=True)
     with editable_tab:
         st.image(state.editable_img, use_container_width=True)
     with difference_tab:
@@ -481,11 +513,39 @@ if uploaded:
             "text/html",
             use_container_width=True,
         )
-    st.link_button(
-        "Open browser editor",
-        state.editor_url,
-        type="primary",
-        use_container_width=True,
+    
+    published_url = publish_editor_html(state.editor_html)
+    b64_html = base64.b64encode(state.editor_html.encode("utf-8")).decode("ascii")
+    st.components.v1.html(
+        f"""
+        <div style="display:flex;flex-direction:column;gap:6px;font-family:sans-serif;">
+          <button id="open-editor-blob" style="width:100%;padding:12px;background:#0369a1;color:white;border:none;border-radius:8px;font-weight:600;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+            Open browser editor in new tab ↗
+          </button>
+          <a href="{published_url}" target="_blank" style="display:block;text-align:center;font-size:12px;color:#0284c7;text-decoration:none;padding:2px;">
+            Direct link: {published_url}
+          </a>
+        </div>
+        <script>
+          const b64Data = "{b64_html}";
+          document.getElementById('open-editor-blob').addEventListener('click', function() {{
+            try {{
+              const binStr = atob(b64Data);
+              const len = binStr.length;
+              const bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {{
+                bytes[i] = binStr.charCodeAt(i);
+              }}
+              const blob = new Blob([bytes], {{type: 'text/html;charset=utf-8'}});
+              const url = URL.createObjectURL(blob);
+              window.open(url, '_blank');
+            }} catch (e) {{
+              window.open('{published_url}', '_blank');
+            }}
+          }});
+        </script>
+        """,
+        height=75,
     )
 
     if st.button("Process another image"):

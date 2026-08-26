@@ -63,28 +63,50 @@ def inject_source_graphics(
     """
     watermark_overlays: list[str] = []
     artwork_overlays: list[str] = []
+    working_html = text_html
+
     for element in graphics.elements:
         source = assets.get(element.id)
         if not source:
             continue
         box = element.box
-        is_watermark = "watermark" in element.role.lower()
-        # Generated layouts commonly use opaque body panels. Keep source
-        # watermarks above those panels, while preserving identity artwork at
-        # the top of the graphic stack.
+        role_lower = element.role.lower()
+        is_watermark = "watermark" in role_lower
+
+        # If it is a header logo and an empty logo-spacer exists in HTML, embed into the layout flow
+        if not is_watermark and any(tag in role_lower for tag in ["logo", "medical_icon"]):
+            spacer_pattern = re.compile(
+                r'(<div\b[^>]*class=["\'][^"\']*\b(?:logo-spacer|clinic-logo-spacer|header-logo-spacer|logo-slot)\b[^"\']*["\'][^>]*>)(\s*</div>)',
+                flags=re.IGNORECASE,
+            )
+            if spacer_pattern.search(working_html):
+                img_tag = f'<img class="header-logo-img" src="{source}" alt="logo" style="width:100%;height:100%;object-fit:contain;display:block;">'
+                working_html = spacer_pattern.sub(r'\g<1>' + img_tag + r'</div>', working_html, count=1)
+                continue
+
+        # Position in overlay stack
         z_index = 25 if is_watermark else max(40, element.z_index)
         opacity = element.opacity
-        overlay = (
-            '<img class="source-graphic-overlay '
-            + ("source-watermark" if is_watermark else "source-artwork")
-            + f'" src="{source}" alt="" style="'
-            + f"left:{box.x * 100:.5f}%;top:{box.y * 100:.5f}%;"
-            + f"width:{box.width * 100:.5f}%;height:{box.height * 100:.5f}%;"
-            + f"opacity:{opacity:.4f};z-index:{z_index};\">"
-        )
-        (watermark_overlays if is_watermark else artwork_overlays).append(overlay)
+        if is_watermark:
+            overlay = (
+                '<img class="source-graphic-overlay source-watermark" '
+                + f'src="{source}" alt="" style="'
+                + f"left:50%;transform:translateX(-50%);top:{box.y * 100:.5f}%;"
+                + f"width:{box.width * 100:.5f}%;height:{box.height * 100:.5f}%;"
+                + f"opacity:{opacity:.4f};z-index:{z_index};\">"
+            )
+            watermark_overlays.append(overlay)
+        else:
+            overlay = (
+                '<img class="source-graphic-overlay source-artwork" '
+                + f'src="{source}" alt="" style="'
+                + f"left:{box.x * 100:.5f}%;top:{box.y * 100:.5f}%;"
+                + f"width:{box.width * 100:.5f}%;height:{box.height * 100:.5f}%;"
+                + f"opacity:{opacity:.4f};z-index:{z_index};\">"
+            )
+            artwork_overlays.append(overlay)
 
-    if not watermark_overlays and not artwork_overlays:
+    if not watermark_overlays and not artwork_overlays and working_html == text_html:
         return text_html
 
     overlay_style = """
@@ -95,14 +117,14 @@ body > .page > :not(.source-graphics-layer), body > #prescription-page > :not(.s
 .source-watermark-layer { z-index:25 !important; }
 .source-artwork-layer { z-index:40 !important; }
 .source-graphic-overlay { position:absolute !important; display:block !important; object-fit:contain !important; pointer-events:none !important; }
-.source-watermark { mix-blend-mode:multiply; }
+.source-watermark { mix-blend-mode: normal; }
 svg.header-logo, svg.watermark-bg { display:none !important; }
 </style>
 """
-    head_close = re.search(r"</head\s*>", text_html, flags=re.IGNORECASE)
+    head_close = re.search(r"</head\s*>", working_html, flags=re.IGNORECASE)
     if head_close is None:
         raise ValueError("Text reconstruction is not a complete HTML document.")
-    with_style = text_html[: head_close.start()] + overlay_style + text_html[head_close.start() :]
+    with_style = working_html[: head_close.start()] + overlay_style + working_html[head_close.start() :]
 
     page_open = re.search(
         r'<div\b[^>]*(?:class=["\'][^"\']*\bpage\b[^"\']*["\']|'

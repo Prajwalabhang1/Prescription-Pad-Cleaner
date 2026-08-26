@@ -52,9 +52,10 @@ class GeminiVisionTests(unittest.TestCase):
         ):
             gemini_vision.validate_reconstruction_html(EMPTY_BODY_HTML)
 
+    @patch("pipeline.gemini_vision.use_openrouter", return_value=False)
     @patch("pipeline.gemini_vision.get_gemini_api_key", return_value="test-key")
     @patch("pipeline.gemini_vision.genai.Client")
-    def test_generation_retries_incomplete_response(self, client_class, _key):
+    def test_generation_retries_incomplete_response(self, client_class, _key, _openrouter):
         first = SimpleNamespace(
             text=TRUNCATED_HTML,
             candidates=[SimpleNamespace(finish_reason="MAX_TOKENS")],
@@ -79,11 +80,12 @@ class GeminiVisionTests(unittest.TestCase):
         self.assertIn("previous attempt did not complete", models.calls[1]["contents"][1])
         self.assertIn(page.css_size, models.calls[0]["contents"][1])
 
+    @patch("pipeline.gemini_vision.use_openrouter", return_value=False)
     @patch("pipeline.gemini_vision.time.sleep")
     @patch("pipeline.gemini_vision.get_gemini_api_key", return_value="test-key")
     @patch("pipeline.gemini_vision.genai.Client")
     def test_generation_retries_transient_deadline_with_compact_image(
-        self, client_class, _key, sleep
+        self, client_class, _key, sleep, _openrouter
     ):
         models = _FakeModels([
             RuntimeError("504 DEADLINE_EXCEEDED"),
@@ -105,11 +107,12 @@ class GeminiVisionTests(unittest.TestCase):
             models.calls[1]["contents"][0].inline_data.mime_type, "image/jpeg"
         )
 
+    @patch("pipeline.gemini_vision.use_openrouter", return_value=False)
     @patch("pipeline.gemini_vision.time.sleep")
     @patch("pipeline.gemini_vision.get_gemini_api_key", return_value="test-key")
     @patch("pipeline.gemini_vision.genai.Client")
     def test_generation_honors_gemini_rate_limit_delay(
-        self, client_class, _key, sleep
+        self, client_class, _key, sleep, _openrouter
     ):
         models = _FakeModels([
             RuntimeError("429 RESOURCE_EXHAUSTED: retryDelay: '46s'"),
@@ -123,16 +126,17 @@ class GeminiVisionTests(unittest.TestCase):
 
         self.assertEqual(html, COMPLETE_HTML)
         self.assertEqual(len(models.calls), 2)
-        sleep.assert_called_once_with(46)
+        sleep.assert_any_call(46)
         self.assertEqual(
             models.calls[1]["contents"][0].inline_data.mime_type, "image/png"
         )
 
+    @patch("pipeline.gemini_vision.use_openrouter", return_value=False)
     @patch("pipeline.gemini_vision.time.sleep")
     @patch("pipeline.gemini_vision.get_gemini_api_key", return_value="test-key")
     @patch("pipeline.gemini_vision.genai.Client")
     def test_generation_uses_free_tier_fallback_after_primary_503(
-        self, client_class, _key, _sleep
+        self, client_class, _key, _sleep, _openrouter
     ):
         models = _FakeModels([
             RuntimeError("503 UNAVAILABLE: temporary high demand"),

@@ -277,6 +277,29 @@ def _manual_crop_corners(
     return cropped, corners
 
 
+def _trim_desk_margins(img: np.ndarray) -> np.ndarray:
+    """Trim dark camera desk margins from full-frame photographs when auto-warp is unconfident."""
+    height, width = img.shape[:2]
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    lightness = lab[:, :, 0]
+    row_means = lightness.mean(axis=1)
+    col_means = lightness.mean(axis=0)
+
+    paper_rows = np.where(row_means > 135)[0]
+    paper_cols = np.where(col_means > 135)[0]
+
+    if len(paper_rows) > 0 and len(paper_cols) > 0:
+        top = max(0, paper_rows[0])
+        bottom = min(height, paper_rows[-1] + 1)
+        left = max(0, paper_cols[0])
+        right = min(width, paper_cols[-1] + 1)
+
+        if (bottom - top) > height * 0.5 and (right - left) > width * 0.5:
+            return img[top:bottom, left:right].copy()
+
+    return img.copy()
+
+
 def preprocess_document(
     image_bytes: bytes, manual_crop: Optional[tuple[float, float, float, float]] = None
 ) -> PreprocessResult:
@@ -291,6 +314,8 @@ def preprocess_document(
         confidence = 0.0 if detection is None else detection.confidence
         method = "full-image" if detection is None else detection.method
         canonical_cv = _warp_page(source, corners) if corners is not None else source.copy()
+        if confidence < 0.72 or method == "full-image":
+            canonical_cv = _trim_desk_margins(canonical_cv)
     canonical_rgb = cv2.cvtColor(canonical_cv, cv2.COLOR_BGR2RGB)
     canonical = Image.fromarray(canonical_rgb)
     restored = _restore_page(canonical_cv)

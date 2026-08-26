@@ -8,6 +8,7 @@ API key, or network connection.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 from pathlib import Path
@@ -25,6 +26,17 @@ class BrowserEditorError(RuntimeError):
 
 EDITOR_STYLE = f"""
 <style id="{EDITOR_MARKER}-style">
+@media screen {{
+  html, body, .page, #prescription-page {{
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }}
+  body {{
+    padding-bottom: 80px !important;
+  }}
+}}
+
 #prescription-editor-toolbar {{
   position: fixed;
   right: 16px;
@@ -133,7 +145,8 @@ EDITOR_UI = """
 
   const markText = (element) => {
     if (element.closest("#prescription-editor-toolbar")) return;
-    if ((element.matches(".text-element") || element.children.length === 0) && element.textContent.trim()) {
+    const hasTextNode = Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0);
+    if ((element.matches(".text-element") || hasTextNode || element.children.length === 0) && element.textContent.trim()) {
       element.dataset.editorText = "true";
       element.dataset.editorNode = "true";
       element.contentEditable = "true";
@@ -329,3 +342,9 @@ def publish_editor_html(editor_html: str, directory: Path = EDITOR_DIRECTORY) ->
     path = directory / filename
     path.write_text(editor_html, encoding="utf-8")
     return f"{EDITOR_URL_PREFIX}/{filename}"
+
+
+def editor_data_uri(editor_html: str) -> str:
+    """Return a data:text/html URI that forces the browser to render HTML, avoiding MIME type raw-code issues."""
+    encoded = base64.b64encode(editor_html.encode("utf-8")).decode("ascii")
+    return f"data:text/html;base64,{encoded}"

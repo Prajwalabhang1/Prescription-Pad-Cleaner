@@ -33,6 +33,13 @@ def refine_manifest(
 ) -> DocumentManifest:
     client = genai.Client(api_key=get_gemini_api_key())
     payload = json.dumps(asdict(manifest), ensure_ascii=False, separators=(",", ":"))
+    refinement_config = {
+        "response_mime_type": "application/json",
+        "max_output_tokens": 24_576,
+        "http_options": types.HttpOptions(timeout=180_000),
+    }
+    if GEMINI_MODEL.startswith("gemini-3"):
+        refinement_config["thinking_config"] = types.ThinkingConfig(thinking_level="high")
     response = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=[
@@ -45,12 +52,7 @@ def refine_manifest(
             + "\nCurrent manifest:\n"
             + payload,
         ],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            max_output_tokens=24_576,
-            thinking_config=types.ThinkingConfig(thinking_level="high"),
-            http_options=types.HttpOptions(timeout=180_000),
-        ),
+        config=types.GenerateContentConfig(**refinement_config),
     )
     return DocumentManifest.from_json(getattr(response, "text", "") or "")
 

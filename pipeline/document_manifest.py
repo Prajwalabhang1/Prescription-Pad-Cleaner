@@ -118,15 +118,13 @@ class DocumentManifest:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DocumentManifest":
         raw_elements = data.get("elements")
-        if not isinstance(raw_elements, list) or not raw_elements:
-            raise ValueError("Document analysis did not contain any elements.")
+        if not isinstance(raw_elements, list):
+            raw_elements = []
         elements = tuple(
             DocumentElement.from_dict(item, index)
             for index, item in enumerate(raw_elements)
             if isinstance(item, dict)
         )
-        if not elements:
-            raise ValueError("Document analysis did not contain valid elements.")
         return cls(background=_color(data.get("background"), "#ffffff"), elements=elements)
 
     @classmethod
@@ -136,8 +134,18 @@ class DocumentManifest:
         text = re.sub(r"\s*```$", "", text)
         start, end = text.find("{"), text.rfind("}")
         if start < 0 or end <= start:
-            raise ValueError("Document analysis did not return a JSON object.")
-        return cls.from_dict(json.loads(text[start : end + 1]))
+            return cls(background="#ffffff", elements=())
+
+        json_str = text[start : end + 1]
+        json_str = re.sub(r",\s*([\]}])", r"\1", json_str)
+        try:
+            return cls.from_dict(json.loads(json_str))
+        except Exception:
+            try:
+                cleaned = re.sub(r"(?<!\\)\n", " ", json_str)
+                return cls.from_dict(json.loads(cleaned))
+            except Exception:
+                return cls(background="#ffffff", elements=())
 
     def transform_all(
         self, scale_x: float = 1.0, scale_y: float = 1.0, dx: float = 0.0, dy: float = 0.0

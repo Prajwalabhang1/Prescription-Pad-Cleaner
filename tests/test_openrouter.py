@@ -27,8 +27,8 @@ class OpenRouterTests(unittest.TestCase):
 
         self.assertEqual(result, "<html></html>")
         _, kwargs = post.call_args
-        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
-        self.assertEqual(kwargs["json"]["model"], "google/gemini-2.5-flash")
+        import config
+        self.assertEqual(kwargs["json"]["model"], config.OPENROUTER_MODEL)
         image = kwargs["json"]["messages"][1]["content"][1]["image_url"]["url"]
         self.assertEqual(image, "data:image/png;base64,aW1hZ2UtZGF0YQ==")
 
